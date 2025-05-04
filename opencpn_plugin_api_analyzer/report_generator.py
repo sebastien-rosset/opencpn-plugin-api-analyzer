@@ -1,379 +1,303 @@
-"""Generate reports from analysis results."""
+"""Generate reports from the analysis results."""
 
+from collections import defaultdict
 import csv
 import json
 import logging
-from collections import defaultdict
+import os
 from pathlib import Path
-from typing import Dict, List, Set
-
-import pandas as pd
+from typing import Dict, List, Set, Any, Optional
 
 
 class ReportGenerator:
-    """Generate reports from analysis results."""
+    """Generate reports from the analysis results."""
 
-    def __init__(self, output_dir: Path, format: str = "markdown"):
+    def __init__(self, output_dir: Path, format: str = "markdown") -> None:
         """Initialize the report generator.
 
         Args:
-            output_dir: Directory to store generated reports.
-            format: Output format (csv, json, html, markdown).
+            output_dir: Directory to store the reports
+            format: Output format (csv, json, html, markdown)
         """
         self.output_dir = output_dir
         self.format = format
         self.logger = logging.getLogger(__name__)
 
-        # Create output directory if it doesn't exist
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-    def _generate_api_to_plugin_map(
-        self, results: Dict[str, Dict[str, Dict[str, int]]]
-    ) -> Dict[str, Dict[str, Set[str]]]:
-        """Generate a mapping from API symbols to plugins that use them.
-
-        Args:
-            results: Analysis results.
-
-        Returns:
-            Dictionary mapping API versions to maps of API symbols to sets of plugins.
-        """
-        api_to_plugins = defaultdict(lambda: defaultdict(set))
-
-        for api_version, plugins in results.items():
-            for plugin_name, symbols in plugins.items():
-                for symbol_name in symbols:
-                    api_to_plugins[api_version][symbol_name].add(plugin_name)
-
-        return {
-            api_version: dict(symbols)
-            for api_version, symbols in api_to_plugins.items()
-        }
-
-    def _generate_markdown(
-        self,
-        results: Dict[str, Dict[str, Dict[str, int]]],
-        api_to_plugins: Dict[str, Dict[str, Set[str]]],
-    ) -> str:
+    def _generate_markdown_report(self, results: Dict[str, Any]) -> None:
         """Generate a Markdown report.
 
         Args:
-            results: Analysis results.
-            api_to_plugins: Mapping from API symbols to plugins.
-
-        Returns:
-            Markdown report as a string.
+            results: Analysis results organized by API version then plugin name
         """
-        report = ["# OpenCPN Plugin API Usage Report\n"]
+        report_path = self.output_dir / "report.md"
 
-        # Summary
-        total_plugins = sum(len(plugins) for plugins in results.values())
-        total_api_symbols = sum(
-            len(set().union(*(symbols.keys() for symbols in plugins.values())))
-            for plugins in results.values()
-        )
+        # Extract all API versions from the results
+        api_versions = list(results.keys())
 
-        report.append(f"## Summary\n")
-        report.append(f"- Total plugins analyzed: {total_plugins}")
-        report.append(f"- Total API symbols used: {total_api_symbols}")
-        report.append(f"- API versions: {', '.join(sorted(results.keys()))}\n")
+        with open(report_path, "w") as f:
+            f.write("# OpenCPN Plugin API Usage Report\n\n")
 
-        # API usage by plugin
-        report.append(f"## API Usage by Plugin\n")
-        for api_version, plugins in sorted(results.items()):
-            report.append(f"### {api_version}\n")
-            for plugin_name, symbols in sorted(plugins.items()):
-                report.append(f"#### {plugin_name}\n")
-                report.append(f"- Uses {len(symbols)} API symbols")
+            # Generate plugin summary with API versions
+            f.write("## Plugin Summary\n\n")
+            f.write("| Plugin Name | API Version |\n")
+            f.write("|------------|-------------|\n")
 
-                # List symbols by type
-                symbols_by_type = defaultdict(list)
-                for symbol_name, count in sorted(symbols.items()):
-                    # Simple symbol type extraction (assuming symbols follow a pattern)
-                    if "::" in symbol_name:
-                        parts = symbol_name.split("::")
-                        if len(parts) >= 2:
-                            symbol_type = parts[-2]
-                        else:
-                            symbol_type = "Other"
-                    else:
-                        symbol_type = "Global"
+            # Create a flattened plugin list for sorting
+            all_plugins = []
+            for api_version, plugins in results.items():
+                for plugin_name, symbols in plugins.items():
+                    # Extract version number from api_version_X.XX format
+                    version_number = api_version.replace("api_version_", "")
+                    all_plugins.append((plugin_name, version_number))
 
-                    symbols_by_type[symbol_type].append((symbol_name, count))
+            # Sort plugins alphabetically
+            for plugin_name, version_number in sorted(
+                all_plugins, key=lambda x: x[0].lower()
+            ):
+                f.write(f"| {plugin_name} | {version_number} |\n")
 
-                for symbol_type, type_symbols in sorted(symbols_by_type.items()):
-                    report.append(f"\n##### {symbol_type}")
-                    report.append("| Symbol | Occurrences |")
-                    report.append("|--------|-------------|")
-                    for symbol_name, count in sorted(type_symbols):
-                        report.append(f"| `{symbol_name}` | {count} |")
+            f.write("\n## API Symbol Usage\n\n")
 
-                report.append("\n")
+            # Count symbol usage across all plugins
+            all_symbols = defaultdict(list)
+            for api_version, plugins in results.items():
+                for plugin_name, symbols in plugins.items():
+                    for symbol in symbols:
+                        all_symbols[symbol].append(plugin_name)
 
-        # API popularity ranking
-        report.append(f"## API Symbol Popularity\n")
-        for api_version, symbols in sorted(api_to_plugins.items()):
-            report.append(f"### {api_version}\n")
-
-            # Sort symbols by number of plugins using them
+            # Sort symbols by usage count (descending)
             sorted_symbols = sorted(
-                symbols.items(), key=lambda x: (len(x[1]), x[0]), reverse=True
+                all_symbols.items(), key=lambda item: len(item[1]), reverse=True
             )
 
-            report.append("| Symbol | Plugins Using | Plugin Names |")
-            report.append("|--------|--------------|-------------|")
+            # Write the overall symbol usage
+            f.write("| Symbol | Plugins Using | Plugin Names |\n")
+            f.write("|--------|--------------|-------------|\n")
+            for symbol, plugins in sorted_symbols:
+                plugin_names = ", ".join(plugins)
+                f.write(f"| `{symbol}` | {len(plugins)} | {plugin_names} |\n")
 
-            for symbol_name, plugin_set in sorted_symbols:
-                plugin_count = len(plugin_set)
-                plugin_list = ", ".join(sorted(plugin_set))
-                report.append(f"| `{symbol_name}` | {plugin_count} | {plugin_list} |")
+            # Report by API version
+            for api_version in sorted(api_versions):
+                version_number = api_version.replace("api_version_", "")
+                f.write(f"\n\n### API Version {version_number}\n\n")
+                f.write("| Symbol | Plugins Using | Plugin Names |\n")
+                f.write("|--------|--------------|-------------|\n")
 
-            report.append("\n")
+                # Collect symbols for this API version
+                version_symbols = defaultdict(list)
+                for plugin_name, symbols in results[api_version].items():
+                    for symbol in symbols:
+                        version_symbols[symbol].append(plugin_name)
 
-        return "\n".join(report)
-
-    def _generate_csv(
-        self,
-        results: Dict[str, Dict[str, Dict[str, int]]],
-        api_to_plugins: Dict[str, Dict[str, Set[str]]],
-    ) -> Dict[str, str]:
-        """Generate CSV reports.
-
-        Args:
-            results: Analysis results.
-            api_to_plugins: Mapping from API symbols to plugins.
-
-        Returns:
-            Dictionary mapping report file names to CSV content.
-        """
-        reports = {}
-
-        # Plugin to API mapping
-        for api_version, plugins in results.items():
-            rows = []
-            for plugin_name, symbols in plugins.items():
-                for symbol_name, count in symbols.items():
-                    rows.append(
-                        {
-                            "API_Version": api_version,
-                            "Plugin": plugin_name,
-                            "Symbol": symbol_name,
-                            "Occurrences": count,
-                        }
-                    )
-
-            if rows:
-                df = pd.DataFrame(rows)
-                csv_content = df.to_csv(index=False)
-                reports[f"plugin_to_api_{api_version}.csv"] = csv_content
-
-        # API to plugin mapping
-        for api_version, symbols in api_to_plugins.items():
-            rows = []
-            for symbol_name, plugin_set in symbols.items():
-                rows.append(
-                    {
-                        "API_Version": api_version,
-                        "Symbol": symbol_name,
-                        "Plugin_Count": len(plugin_set),
-                        "Plugins": ", ".join(sorted(plugin_set)),
-                    }
+                # Sort symbols by usage count (descending)
+                sorted_version_symbols = sorted(
+                    version_symbols.items(), key=lambda item: len(item[1]), reverse=True
                 )
 
-            if rows:
-                df = pd.DataFrame(rows)
-                df = df.sort_values("Plugin_Count", ascending=False)
-                csv_content = df.to_csv(index=False)
-                reports[f"api_to_plugin_{api_version}.csv"] = csv_content
+                for symbol, plugins in sorted_version_symbols:
+                    plugin_names = ", ".join(plugins)
+                    f.write(f"| `{symbol}` | {len(plugins)} | {plugin_names} |\n")
 
-        return reports
-
-    def _generate_json(
-        self,
-        results: Dict[str, Dict[str, Dict[str, int]]],
-        api_to_plugins: Dict[str, Dict[str, Set[str]]],
-    ) -> Dict[str, str]:
-        """Generate JSON reports.
+    def _generate_csv_report(self, results: Dict[str, Any]) -> None:
+        """Generate a CSV report.
 
         Args:
-            results: Analysis results.
-            api_to_plugins: Mapping from API symbols to plugins.
-
-        Returns:
-            Dictionary mapping report file names to JSON content.
+            results: Analysis results organized by API version then plugin name
         """
-        reports = {}
+        report_path = self.output_dir / "report.csv"
 
-        # Convert set objects to lists for JSON serialization
-        json_api_to_plugins = {}
-        for api_version, symbols in api_to_plugins.items():
-            json_api_to_plugins[api_version] = {
-                symbol: list(plugins) for symbol, plugins in symbols.items()
-            }
+        # Collect all symbols across all plugins
+        all_symbols = set()
+        for api_version, plugins in results.items():
+            for plugin_name, symbols in plugins.items():
+                all_symbols.update(symbols)
 
-        # Full results
-        reports["full_results.json"] = json.dumps(
-            {"plugin_to_api": results, "api_to_plugin": json_api_to_plugins}, indent=2
-        )
+        # Create a flattened plugin list
+        plugin_data = []
+        for api_version, plugins in results.items():
+            version_number = api_version.replace("api_version_", "")
+            for plugin_name, symbols in plugins.items():
+                plugin_data.append((plugin_name, version_number, symbols))
 
-        return reports
+        with open(report_path, "w", newline="") as f:
+            writer = csv.writer(f)
 
-    def _generate_html(
-        self,
-        results: Dict[str, Dict[str, Dict[str, int]]],
-        api_to_plugins: Dict[str, Dict[str, Set[str]]],
-    ) -> str:
+            # Write header
+            header = ["Plugin", "API Version"] + list(sorted(all_symbols))
+            writer.writerow(header)
+
+            # Sort plugins alphabetically
+            plugin_data.sort(key=lambda x: x[0].lower())
+
+            # Write data
+            for plugin_name, version_number, symbols in plugin_data:
+                row = [plugin_name, version_number]
+                for symbol in sorted(all_symbols):
+                    if symbol in symbols:
+                        row.append("X")
+                    else:
+                        row.append("")
+                writer.writerow(row)
+
+    def _generate_json_report(self, results: Dict[str, Any]) -> None:
+        """Generate a JSON report.
+
+        Args:
+            results: Analysis results organized by API version then plugin name
+        """
+        report_path = self.output_dir / "report.json"
+
+        with open(report_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+    def _generate_html_report(self, results: Dict[str, Any]) -> None:
         """Generate an HTML report.
 
         Args:
-            results: Analysis results.
-            api_to_plugins: Mapping from API symbols to plugins.
-
-        Returns:
-            HTML report as a string.
+            results: Analysis results organized by API version then plugin name
         """
-        # Convert results to pandas DataFrames for easy HTML conversion
-        plugin_to_api_rows = []
-        for api_version, plugins in results.items():
-            for plugin_name, symbols in plugins.items():
-                for symbol_name, count in symbols.items():
-                    plugin_to_api_rows.append(
-                        {
-                            "API_Version": api_version,
-                            "Plugin": plugin_name,
-                            "Symbol": symbol_name,
-                            "Occurrences": count,
-                        }
-                    )
+        report_path = self.output_dir / "report.html"
 
-        api_to_plugin_rows = []
-        for api_version, symbols in api_to_plugins.items():
-            for symbol_name, plugin_set in symbols.items():
-                api_to_plugin_rows.append(
-                    {
-                        "API_Version": api_version,
-                        "Symbol": symbol_name,
-                        "Plugin_Count": len(plugin_set),
-                        "Plugins": ", ".join(sorted(plugin_set)),
-                    }
+        # Extract all API versions from the results
+        api_versions = list(results.keys())
+
+        with open(report_path, "w") as f:
+            f.write(
+                """<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenCPN Plugin API Usage Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; text-align: left; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        h1, h2, h3 { color: #005580; }
+        .code { font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>OpenCPN Plugin API Usage Report</h1>
+    
+    <h2>Plugin Summary</h2>
+    <table>
+        <tr>
+            <th>Plugin Name</th>
+            <th>API Version</th>
+        </tr>
+"""
+            )
+
+            # Create a flattened plugin list for sorting
+            all_plugins = []
+            for api_version, plugins in results.items():
+                version_number = api_version.replace("api_version_", "")
+                for plugin_name in plugins.keys():
+                    all_plugins.append((plugin_name, version_number))
+
+            # Sort plugins alphabetically
+            for plugin_name, version_number in sorted(
+                all_plugins, key=lambda x: x[0].lower()
+            ):
+                f.write(
+                    f"        <tr><td>{plugin_name}</td><td>{version_number}</td></tr>\n"
                 )
 
-        if not plugin_to_api_rows or not api_to_plugin_rows:
-            return "<h1>No results to display</h1>"
+            f.write(
+                """    </table>
+            
+    <h2>API Symbol Usage</h2>
+    <table>
+        <tr>
+            <th>Symbol</th>
+            <th>Plugins Using</th>
+            <th>Plugin Names</th>
+        </tr>
+"""
+            )
 
-        # Create DataFrames
-        plugin_to_api_df = pd.DataFrame(plugin_to_api_rows)
-        api_to_plugin_df = pd.DataFrame(api_to_plugin_rows)
-        api_to_plugin_df = api_to_plugin_df.sort_values("Plugin_Count", ascending=False)
+            # Count symbol usage across all plugins
+            all_symbols = defaultdict(list)
+            for api_version, plugins in results.items():
+                for plugin_name, symbols in plugins.items():
+                    for symbol in symbols:
+                        all_symbols[symbol].append(plugin_name)
 
-        # Create HTML
-        html = [
-            "<!DOCTYPE html>",
-            "<html>",
-            "<head>",
-            "<title>OpenCPN Plugin API Usage Report</title>",
-            "<style>",
-            "body { font-family: Arial, sans-serif; margin: 20px; }",
-            "table { border-collapse: collapse; margin: 10px 0; }",
-            "th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }",
-            "th { background-color: #f2f2f2; }",
-            "tr:nth-child(even) { background-color: #f9f9f9; }",
-            "h1, h2, h3 { color: #333; }",
-            ".tab { overflow: hidden; border: 1px solid #ccc; background-color: #f1f1f1; }",
-            ".tab button { background-color: inherit; float: left; border: none; ",
-            "outline: none; cursor: pointer; padding: 14px 16px; }",
-            ".tab button:hover { background-color: #ddd; }",
-            ".tab button.active { background-color: #ccc; }",
-            ".tabcontent { display: none; padding: 6px 12px; }",
-            "</style>",
-            "</head>",
-            "<body>",
-            "<h1>OpenCPN Plugin API Usage Report</h1>",
-            "<div class='tab'>",
-            "<button class='tablinks' onclick=\"openTab(event, 'Summary')\">Summary</button>",
-            "<button class='tablinks' onclick=\"openTab(event, 'APIpop')\" id='defaultOpen'>API Popularity</button>",
-            "<button class='tablinks' onclick=\"openTab(event, 'PluginUsage')\">Plugin Usage</button>",
-            "</div>",
-            "<div id='Summary' class='tabcontent'>",
-            f"<h2>Summary</h2>",
-            f"<p>Total plugins analyzed: {len(set(row['Plugin'] for row in plugin_to_api_rows))}</p>",
-            f"<p>Total API symbols used: {len(set(row['Symbol'] for row in plugin_to_api_rows))}</p>",
-            f"<p>API versions: {', '.join(sorted(set(row['API_Version'] for row in plugin_to_api_rows)))}</p>",
-            "</div>",
-            "<div id='APIpop' class='tabcontent'>",
-            "<h2>API Symbol Popularity</h2>",
-            api_to_plugin_df.to_html(index=False),
-            "</div>",
-            "<div id='PluginUsage' class='tabcontent'>",
-            "<h2>API Usage by Plugin</h2>",
-            plugin_to_api_df.to_html(index=False),
-            "</div>",
-            "<script>",
-            "function openTab(evt, tabName) {",
-            "  var i, tabcontent, tablinks;",
-            "  tabcontent = document.getElementsByClassName('tabcontent');",
-            "  for (i = 0; i < tabcontent.length; i++) {",
-            "    tabcontent[i].style.display = 'none';",
-            "  }",
-            "  tablinks = document.getElementsByClassName('tablinks');",
-            "  for (i = 0; i < tablinks.length; i++) {",
-            "    tablinks[i].className = tablinks[i].className.replace(' active', '');",
-            "  }",
-            "  document.getElementById(tabName).style.display = 'block';",
-            "  evt.currentTarget.className += ' active';",
-            "}",
-            "document.getElementById('defaultOpen').click();",
-            "</script>",
-            "</body>",
-            "</html>",
-        ]
+            # Sort symbols by usage count (descending)
+            sorted_symbols = sorted(
+                all_symbols.items(), key=lambda item: len(item[1]), reverse=True
+            )
 
-        return "\n".join(html)
+            for symbol, plugins in sorted_symbols:
+                plugin_names = ", ".join(plugins)
+                f.write(
+                    f'        <tr><td class="code">{symbol}</td><td>{len(plugins)}</td><td>{plugin_names}</td></tr>\n'
+                )
 
-    def generate(self, results: Dict[str, Dict[str, Dict[str, int]]]) -> None:
-        """Generate reports from analysis results.
+            f.write("    </table>\n")
+
+            # Report by API version
+            for api_version in sorted(api_versions):
+                version_number = api_version.replace("api_version_", "")
+                f.write(
+                    f"""
+    <h3>API Version {version_number}</h3>
+    <table>
+        <tr>
+            <th>Symbol</th>
+            <th>Plugins Using</th>
+            <th>Plugin Names</th>
+        </tr>
+"""
+                )
+
+                # Collect symbols for this API version
+                version_symbols = defaultdict(list)
+                for plugin_name, symbols in results[api_version].items():
+                    for symbol in symbols:
+                        version_symbols[symbol].append(plugin_name)
+
+                # Sort symbols by usage count (descending)
+                sorted_version_symbols = sorted(
+                    version_symbols.items(), key=lambda item: len(item[1]), reverse=True
+                )
+
+                for symbol, plugins in sorted_version_symbols:
+                    plugin_names = ", ".join(plugins)
+                    f.write(
+                        f'        <tr><td class="code">{symbol}</td><td>{len(plugins)}</td><td>{plugin_names}</td></tr>\n'
+                    )
+
+                f.write("    </table>\n")
+
+            f.write(
+                """</body>
+</html>"""
+            )
+
+    def generate(self, results: Dict[str, Any]) -> None:
+        """Generate reports from the analysis results.
 
         Args:
-            results: Analysis results.
+            results: Analysis results organized by API version then plugin name
         """
-        self.logger.info(f"Generating {self.format} reports")
+        self.logger.info(f"Generating {self.format} report")
 
-        # Generate API to plugin mapping
-        api_to_plugins = self._generate_api_to_plugin_map(results)
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
 
-        # Generate reports based on the specified format
         if self.format == "markdown":
-            md_content = self._generate_markdown(results, api_to_plugins)
-            md_path = self.output_dir / "report.md"
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write(md_content)
-            self.logger.info(f"Markdown report saved to {md_path}")
-
+            self._generate_markdown_report(results)
         elif self.format == "csv":
-            csv_reports = self._generate_csv(results, api_to_plugins)
-            for file_name, content in csv_reports.items():
-                csv_path = self.output_dir / file_name
-                with open(csv_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-            self.logger.info(f"CSV reports saved to {self.output_dir}")
-
+            self._generate_csv_report(results)
         elif self.format == "json":
-            json_reports = self._generate_json(results, api_to_plugins)
-            for file_name, content in json_reports.items():
-                json_path = self.output_dir / file_name
-                with open(json_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-            self.logger.info(f"JSON reports saved to {self.output_dir}")
-
+            self._generate_json_report(results)
         elif self.format == "html":
-            html_content = self._generate_html(results, api_to_plugins)
-            html_path = self.output_dir / "report.html"
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(html_content)
-            self.logger.info(f"HTML report saved to {html_path}")
-
+            self._generate_html_report(results)
         else:
-            self.logger.error(f"Unsupported report format: {self.format}")
-            raise ValueError(f"Unsupported report format: {self.format}")
+            self.logger.warning(f"Unsupported format: {self.format}, using markdown")
+            self._generate_markdown_report(results)
 
-        self.logger.info("Report generation complete")
+        self.logger.info(f"Report saved to {self.output_dir}")
