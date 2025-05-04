@@ -30,7 +30,17 @@ API_URL_TEMPLATE = "https://raw.githubusercontent.com/OpenCPN/opencpn-libs/refs/
 # Optional: Specific plugins to analyze (leave empty to analyze all)
 PLUGINS_TO_ANALYZE = [
     "AutoTrackRaymarine",
-    "weather_routing",
+    "Calculator",
+    "CanadianTides",
+    "Climatology",
+    "DR",
+    "DashboardSK",
+    "EarthExplorer",
+    "IACFleet",
+    "Polar",
+    "VDR",
+    "Watchdog",
+    #"WeatherRouting",
     # Add more plugin names here
 ]
 
