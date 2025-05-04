@@ -341,8 +341,12 @@ class PluginAnalyzer:
             for name, plugin in tqdm(
                 api_plugins.items(), desc=f"Processing {api_version}"
             ):
-                # Clone repository
-                repo_path = self.repo_handler.clone_repo(plugin.source_repo)
+                # Clone repository with specific version checkout
+                repo_path = self.repo_handler.clone_repo(
+                    plugin.source_repo,
+                    version=plugin.version  # Use the plugin version for checkout
+                )
+
                 if not repo_path:
                     self.logger.warning(
                         f"Failed to clone repository for plugin: {name}"
@@ -356,7 +360,7 @@ class PluginAnalyzer:
                 if symbol_counts:
                     results[api_version][name] = symbol_counts
                     self.logger.info(
-                        f"Plugin {name} uses {len(symbol_counts)} API symbols"
+                        f"Plugin {name} (v{plugin.version}) uses {len(symbol_counts)} API symbols"
                     )
 
         return dict(results)

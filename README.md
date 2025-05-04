@@ -5,6 +5,7 @@ A tool to analyze API usage across OpenCPN plugins.
 ## Overview
 
 This project automatically analyzes the API usage in OpenCPN plugins by:
+
 1. Parsing the OpenCPN plugin API header file using Clang/LLVM
 2. Extracting plugin metadata from the OpenCPN plugins XML file
 3. Cloning plugin repositories and analyzing their source code

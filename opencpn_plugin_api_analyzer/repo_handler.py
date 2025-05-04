@@ -6,7 +6,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import git
 from tqdm import tqdm
@@ -55,11 +55,12 @@ class RepoHandler:
 
         return repo_name
 
-    def clone_repo(self, repo_url: str) -> Optional[Path]:
-        """Clone a repository.
+    def clone_repo(self, repo_url: str, version: Optional[str] = None) -> Optional[Path]:
+        """Clone a repository and checkout a specific version if specified.
 
         Args:
             repo_url: Repository URL.
+            version: Optional version tag or branch to checkout after cloning.
 
         Returns:
             Path to the cloned repository, or None if cloning failed.
@@ -68,33 +69,78 @@ class RepoHandler:
             self.logger.warning("No repository URL provided")
             return None
 
+        # Calculate a unique directory name based on the repo URL and version
         repo_name = self._sanitize_repo_name(repo_url)
-        repo_dir = self.work_dir / repo_name
+        if version:
+            safe_version = re.sub(r"[^\w.-]", "_", version)
+            version_dir = f"{repo_name}_{safe_version}"
+        else:
+            version_dir = repo_name
 
-        # Check if the repository already exists
+        repo_dir = self.work_dir / version_dir
+
+        # Check if the repository already exists with the right version
         if repo_dir.exists():
             self.logger.info(f"Repository already exists: {repo_dir}")
-            try:
-                # Try to update the repository
-                repo = git.Repo(repo_dir)
-                self.logger.info(f"Updating repository: {repo_url}")
-                repo.git.fetch("--all")
-                repo.git.reset("--hard", "origin/master")
-                self.logger.info(f"Repository updated: {repo_dir}")
-                return repo_dir
-            except git.GitCommandError as e:
-                self.logger.warning(f"Failed to update repository: {e}")
-                # Continue with a fresh clone
-                shutil.rmtree(repo_dir)
+            return repo_dir
 
         # Clone the repository
         try:
             self.logger.info(f"Cloning repository: {repo_url}")
-            git.Repo.clone_from(repo_url, repo_dir, depth=1)
+            repo = git.Repo.clone_from(repo_url, repo_dir)
+
+            # Checkout the specified version if provided
+            if version:
+                try:
+                    # Try to treat the version as a tag first
+                    self.logger.info(f"Checking out version: {version}")
+
+                    # Find potential tags that match this version
+                    matching_tags = []
+                    for tag in repo.tags:
+                        tag_name = str(tag)
+                        # Look for exact match or tag with 'v' prefix
+                        if tag_name == version or tag_name == f"v{version}":
+                            matching_tags.append(tag_name)
+                        # Also search for tags starting with the version
+                        elif tag_name.startswith(version):
+                            matching_tags.append(tag_name)
+
+                    # If we found matching tags, use the first one
+                    if matching_tags:
+                        self.logger.info(f"Found matching tags: {matching_tags}")
+                        repo.git.checkout(matching_tags[0])
+                    else:
+                        # If no tag found, try branches
+                        matching_branches = []
+                        for ref in repo.references:
+                            if ref.name.startswith(f"origin/{version}"):
+                                matching_branches.append(ref.name)
+
+                        if matching_branches:
+                            self.logger.info(f"Found matching branches: {matching_branches}")
+                            repo.git.checkout(matching_branches[0])
+                        else:
+                            # If all else fails, try to directly checkout the version as a commit
+                            try:
+                                repo.git.checkout(version)
+                            except git.GitCommandError:
+                                self.logger.warning(
+                                    f"Could not find version {version} as a tag, branch, or commit. "
+                                    "Using default branch."
+                                )
+
+                except git.GitCommandError as e:
+                    self.logger.warning(f"Failed to checkout version {version}: {e}")
+                    self.logger.info("Using default branch instead")
+
             self.logger.info(f"Repository cloned: {repo_dir}")
             return repo_dir
+
         except git.GitCommandError as e:
             self.logger.error(f"Failed to clone repository: {e}")
+            if repo_dir.exists():
+                shutil.rmtree(repo_dir)
             return None
 
     def find_cpp_files(self, repo_dir: Path) -> List[Path]:
