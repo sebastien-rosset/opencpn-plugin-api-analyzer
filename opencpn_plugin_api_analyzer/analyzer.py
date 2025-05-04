@@ -138,10 +138,50 @@ class PluginAnalyzer:
             short_name = symbol_name.split("::")[-1]
 
             # Look for exact matches outside of comments and strings
-            # This regex matches the symbol name as a whole word, not inside a comment or string
-            pattern = r'(?<!//)(?<!"[^"]*)\b' + re.escape(short_name) + r'\b(?![^"]*")'
+            # Split the content into lines and analyze each line to avoid look-behind issues
+            pattern = re.compile(r"\b" + re.escape(short_name) + r"\b")
 
-            if re.search(pattern, content):
+            # Check if pattern exists outside of comments and strings
+            match_found = False
+            for line in content.splitlines():
+                # Skip comment lines
+                if line.strip().startswith("//"):
+                    continue
+
+                # For each line, check if it contains the pattern outside of quotes
+                line_parts = []
+                in_quote = False
+                start_idx = 0
+
+                for i, char in enumerate(line):
+                    if char == '"' and (
+                        i == 0 or line[i - 1] != "\\"
+                    ):  # Handle escaped quotes
+                        if in_quote:
+                            # End of quoted section
+                            in_quote = False
+                            start_idx = i + 1
+                        else:
+                            # Start of quoted section - add non-quoted part to line_parts
+                            if i > start_idx:
+                                line_parts.append(line[start_idx:i])
+                            in_quote = True
+                            start_idx = i + 1
+
+                # Add the last part if it's not in quotes
+                if not in_quote and start_idx < len(line):
+                    line_parts.append(line[start_idx:])
+
+                # Check for pattern in non-quoted parts
+                for part in line_parts:
+                    if pattern.search(part):
+                        match_found = True
+                        break
+
+                if match_found:
+                    break
+
+            if match_found:
                 # Additional checks to reduce false positives
 
                 # For methods, check if they're called as member functions
@@ -152,11 +192,11 @@ class PluginAnalyzer:
                     class_name = symbol_name.split("::")[-2]
                     # Look for pattern like "obj.method(" or "Class::method("
                     method_pattern = (
-                        r"(?:\b"
+                        r"\b"
                         + re.escape(class_name)
                         + r"(?:::|\.)"
                         + re.escape(short_name)
-                        + r"\s*\()"
+                        + r"\s*\("
                     )
                     if re.search(method_pattern, content):
                         found_symbols.add(symbol_name)
@@ -166,7 +206,7 @@ class PluginAnalyzer:
                 if symbol.kind in ("CLASS_DECL", "STRUCT_DECL"):
                     # Look for pattern like "Class var" or "Class* var" or "Class &var"
                     class_pattern = (
-                        r"(?:\b" + re.escape(short_name) + r"\s*(?:\*|\&)?\s*\w+)"
+                        r"\b" + re.escape(short_name) + r"\s*(?:\*|\&)?\s*\w+"
                     )
                     if re.search(class_pattern, content):
                         found_symbols.add(symbol_name)
@@ -177,18 +217,18 @@ class PluginAnalyzer:
                     enum_name = symbol_name.split("::")[-2]
                     # Look for pattern like "Enum::CONSTANT" or "using Enum; ... CONSTANT"
                     enum_pattern = (
-                        r"(?:\b"
+                        r"\b"
                         + re.escape(enum_name)
                         + r"::"
                         + re.escape(short_name)
-                        + r"\b)"
+                        + r"\b"
                     )
                     using_pattern = (
-                        r"(?:using\s+(?:namespace\s+)?"
+                        r"using\s+(?:namespace\s+)?"
                         + re.escape(enum_name)
                         + r"\s*;.*\b"
                         + re.escape(short_name)
-                        + r"\b)"
+                        + r"\b"
                     )
                     if re.search(enum_pattern, content) or re.search(
                         using_pattern, content, re.DOTALL
