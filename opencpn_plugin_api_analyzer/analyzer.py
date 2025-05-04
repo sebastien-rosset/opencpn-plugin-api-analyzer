@@ -344,7 +344,7 @@ class PluginAnalyzer:
                 # Clone repository with specific version checkout
                 repo_path = self.repo_handler.clone_repo(
                     plugin.source_repo,
-                    version=plugin.version  # Use the plugin version for checkout
+                    version=plugin.version,  # Use the plugin version for checkout
                 )
 
                 if not repo_path:

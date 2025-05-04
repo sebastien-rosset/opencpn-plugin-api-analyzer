@@ -21,6 +21,9 @@ except ImportError as e:
     print("Please make sure libclang-dev is installed on your system")
     sys.exit(1)
 
+# Global flag to track if libclang has been initialized
+_LIBCLANG_INITIALIZED = False
+
 
 @dataclass
 class ApiSymbol:
@@ -49,9 +52,46 @@ class ApiHeaderParser:
         self.header_path = None
         self.index = None
 
-        # Initialize Clang
-        clang.cindex.Config.set_library_path(self._find_clang_lib_path())
+        # Initialize Clang once for the application
+        global _LIBCLANG_INITIALIZED
+        if not _LIBCLANG_INITIALIZED:
+            self._initialize_clang()
+            _LIBCLANG_INITIALIZED = True
+
+        # Create Clang index
         self.index = clang.cindex.Index.create()
+
+    def _initialize_clang(self):
+        """Initialize the Clang library once."""
+        lib_path = self._find_clang_lib_path()
+        if lib_path:
+            try:
+                Config.set_library_path(lib_path)
+                self.logger.info(f"Initialized libclang with library path: {lib_path}")
+            except Exception as e:
+                self.logger.warning(f"Failed to set libclang library path: {e}")
+                self._try_direct_library_file()
+
+    def _try_direct_library_file(self):
+        """Try to set the library file directly if setting the path fails."""
+        # Check common locations for the actual library file
+        possible_library_files = [
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libclang.dylib",
+            "/opt/homebrew/opt/llvm/lib/libclang.dylib",
+            "/usr/local/opt/llvm/lib/libclang.dylib",
+        ]
+
+        for lib_file in possible_library_files:
+            if os.path.exists(lib_file):
+                try:
+                    Config.set_library_file(lib_file)
+                    self.logger.info(f"Set libclang library file directly: {lib_file}")
+                    return True
+                except Exception as e:
+                    self.logger.warning(f"Failed to set library file {lib_file}: {e}")
+
+        self.logger.error("Could not initialize libclang with any known library file")
+        return False
 
     def _find_clang_lib_path(self) -> str:
         """Find the path to the Clang library.

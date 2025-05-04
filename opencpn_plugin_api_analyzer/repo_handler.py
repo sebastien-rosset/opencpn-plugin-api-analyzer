@@ -55,7 +55,9 @@ class RepoHandler:
 
         return repo_name
 
-    def clone_repo(self, repo_url: str, version: Optional[str] = None) -> Optional[Path]:
+    def clone_repo(
+        self, repo_url: str, version: Optional[str] = None
+    ) -> Optional[Path]:
         """Clone a repository and checkout a specific version if specified.
 
         Args:
@@ -118,7 +120,9 @@ class RepoHandler:
                                 matching_branches.append(ref.name)
 
                         if matching_branches:
-                            self.logger.info(f"Found matching branches: {matching_branches}")
+                            self.logger.info(
+                                f"Found matching branches: {matching_branches}"
+                            )
                             repo.git.checkout(matching_branches[0])
                         else:
                             # If all else fails, try to directly checkout the version as a commit
