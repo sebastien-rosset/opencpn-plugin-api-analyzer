@@ -1,0 +1,31 @@
+[tool.poetry]
+name = "opencpn-plugin-api-analyzer"
+version = "0.1.0"
+description = "A tool to analyze API usage in OpenCPN plugins"
+authors = ["Sebastien Rosset"]
+readme = "README.md"
+packages = [{include = "opencpn_plugin_api_analyzer"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+lxml = "^5.4.0"
+libclang = "^18.1.1"
+requests = "^2.32.3"
+gitpython = "^3.1.44"
+tqdm = "^4.67.1"
+pandas = "^2.2.3"
+sqlalchemy = "^2.0.40"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.5"
+black = "^25.1.0"
+mypy = "^1.15.0"
+pylint = "^3.3.6"
+isort = "^6.0.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+analyze = "opencpn_plugin_api_analyzer.cli:main"
